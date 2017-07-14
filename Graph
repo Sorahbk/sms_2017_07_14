@@ -1,0 +1,310 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using System.Threading;
+using System.Diagnostics;
+using System.Windows.Forms.DataVisualization.Charting.ChartTypes;
+
+namespace Graph_of_PLC_SMS
+{
+    public partial class Form1 : Form//****************************************Режим прокрутки работает только при паузе**********************************************
+    {
+        Thread th;//Поток в котором происходит обновление и отрисовка, последняя по нужности
+        Random rand;//Нам он не нужен, Но я им генерирую числа
+        bool pausemode =false;//режи паузы
+        int mousemode = 0;// режим колеса мыши
+        bool updmode = true;//режим обновления
+        int[] shift;//Массив сдвигов для выведения информации
+        List<Parametr> options;// Список параметров,которые будут отрисовываться, впринципе нужно только имя и сам класс Parametr лишний
+        List<double[]> sources;// Список массивов для хранения последних 100(другое число) значений, они обновляются.
+        List<double>[] values;// Массив списков всех полученных значений
+        double value = 0;//считываемое значение, его даёт Сева
+        public Form1()
+        {
+            InitializeComponent();//Инициализация options,sources,valuse,shift,combobox-ов
+            options = new List<Parametr> { new Parametr("Enviroment_temp", 1, 100, 4), new Parametr("CPU_temp", 1, 0, 4), new Parametr("Voltage", 2, 0, 4), new Parametr("Amperage", 2, 10, 4), new Parametr("Charge_Level", 3, 0, 4) };
+            sources = new List<double[]>(options.Count);
+            values = new List<double>[options.Count];
+            shift = new int[options.Count];
+            comboBox1.Items.Clear();
+            comboBox2.Items.Clear();
+            for (int i = 0; i < options.Count; i++)
+            {
+                comboBox1.Items.Add(i + 1);
+            }
+            for (int j = 1; j < 11; j++)
+            {
+                comboBox2.Items.Add(j);
+            }
+            comboBox1.SelectedIndex = 0;
+            comboBox2.SelectedIndex = 0;
+            comboBox3.SelectedIndex = 0;
+            rand = new Random();
+        }
+
+        private void button1_Click(object sender, EventArgs e)//Запуск потока
+        {
+            button1.Enabled = false;
+            chart1.Series.Clear();
+            for (int i = 0; i < options.Count; i++)
+            {
+                values[i] = new List<double>();
+                sources.Add(new double[100]);
+                chart1.Series.Add((i + 1) + " " + options[i].name);
+                chart1.Series[i].ChartType = System.Windows.Forms.DataVisualization.Charting.SeriesChartType.FastLine;
+            }
+            chart1.Focus();//Фокус важен для масштабирования
+            th = new Thread(new ThreadStart(this.Change));
+            th.IsBackground = true;
+            th.Start();
+        }
+
+        public void Change()//Метод change считываемое значение добавляется в общий список и в последнее место в отрисовываемом массиве
+        {
+            while (true)
+            {
+                for (int i = 0; i < sources.Count; i++)
+                {
+                    switch (i)// switch не нужен будет просто value, если value будет массивом, то проблем тоже не будет
+                    {
+                        case 0: value = 3 + 2 * rand.NextDouble(); break;
+                        case 1: value = 2 + rand.NextDouble(); break;
+                        case 2: value = -1 - 2 * rand.NextDouble(); break;
+                        case 3: value = -1 + rand.NextDouble(); break;
+                        case 4: value = 3 * rand.NextDouble(); break;
+                    }
+                    values[i].Add(Convert.ToDouble(value));
+                    sources[i][sources[i].Length - 1] = value;//новое значение которое мы считаем
+                    Array.Copy(sources[i], 1, sources[i], 0, sources[i].Length - 1);
+                }
+                try
+                {
+                    if (updmode)//Обновление графиков
+                    {
+                        this.Invoke((MethodInvoker)delegate { Upd(); });
+                    }
+                    Thread.Sleep(100);
+                }
+                catch
+                { }
+            }
+        }
+
+        public void Upd()//Обновление chart
+        {
+            for (int i = 0; i < sources.Count; i++)
+            {
+                chart1.Series[i].Points.Clear();
+            }
+            for (int i = 0; i < sources.Count; i++)
+            {
+                for (int j = 0; j < sources[i].Length; j++)
+                {
+                    chart1.Series[i].Points.AddY(sources[i][j]);
+                }
+            }
+            chart2.Series[0].Points.Clear();//chart 2 Будет отдельным графиком, где сначало нужно выбрать x,y и добавить их.
+            chart2.Series[1].Points.Clear();
+            chart2.Series[2].Points.Clear();
+            for (int i = 0; i < sources[0].Length; i++)
+            {
+                chart2.Series[0].Points.AddXY(sources[0][i], sources[1][i]);
+                chart2.Series[1].Points.AddXY(sources[1][i], sources[2][i]);
+                chart2.Series[2].Points.AddXY(sources[3][i], sources[4][i]);
+            }
+            chart1.Invalidate();
+            chart2.Invalidate();
+            label1.Text = Convert.ToString(shift[0]);
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+
+        }
+
+        private void button3_Click(object sender, EventArgs e)// Изменение толщины линии
+        {
+            chart1.Series[Convert.ToInt32(comboBox1.SelectedIndex)].BorderWidth = Convert.ToInt32(comboBox2.SelectedIndex + 1);
+            chart1.Focus();
+        }
+
+        private void button4_Click(object sender, EventArgs e)//Кнопка паузы
+        {
+            if(values[0].Count>=sources[0].Length){//Пауза запускается, только когда график полностью заполнил все 100 значений
+                if (!pausemode)
+                {
+                    updmode = false;
+                    pausemode = true;
+                    if (comboBox3.SelectedIndex == 1)
+                    {
+                        mousemode = 1;
+                    }
+                    else
+                    {
+                        if (comboBox3.SelectedIndex == 0)
+                        {
+                            mousemode = 0;
+                        }
+                    }
+                    button4.Text = "Продолжить";
+                    for (int i = 0; i < shift.Length; i++)//заполняем массив сдвигов на данный момент
+                    {
+                        shift[i] = values[i].Count - sources[i].Length - 1;
+                    }
+                    chart1.Focus();
+                }
+                else
+                {
+                    chart1.Focus();
+                    pausemode = false;
+                    if (comboBox3.SelectedIndex == 1)
+                    {
+                        mousemode = 2;
+                    }
+                    else
+                    {
+                        if (comboBox3.SelectedIndex == 0)
+                        {
+                            mousemode = 0;
+                        }
+                    }
+                    button4.Text = "Пауза";
+                    th.Abort();//Обрываем поток, забиваем последние полученные значения, и начинаем работать снова.
+                    for (int i = 0; i < sources.Count; i++)
+                    {
+                        Array.Copy(values[i].ToArray(), values[i].Count - 1 - sources[i].Length, sources[i], 0, sources[i].Length);
+                    }
+                    updmode = true;
+                    th = new Thread(new ThreadStart(this.Change));
+                    th.IsBackground = true;
+                    th.Start();
+                }
+            }
+        }
+
+        private void chart1_MouseWheel(object sender, MouseEventArgs e)
+        {
+            try
+            {
+                if (mousemode == 1)// Режим прокрутки
+                {
+                    if (e.Delta < 0)
+                    {
+                        for (int i = 0; i < sources.Count; i++)
+                        {
+                            if (shift[i] >= 0)
+                            {
+                                Array.Copy(values[i].ToArray(), shift[i], sources[i], 0, sources[i].Length);
+                                Upd();
+                                shift[i]--;
+                            }
+                            else
+                            {
+                                shift[i]++;
+                            }
+                        }
+                    }
+                    if (e.Delta > 0)
+                    {
+                        for (int i = 0; i < sources.Count; i++)
+                        {
+                            if ((shift[i] + sources[i].Length + 1) <= values[i].Count)
+                            {
+                                Array.Copy(values[i].ToArray(), shift[i], sources[i], 0, sources[i].Length);
+                                Upd();
+                                shift[i]++;
+                            }
+                            else
+                            {
+                                shift[i]--;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    if (mousemode == 0)// Режим масштабировния
+                    {
+                        if (e.Delta < 0)
+                        {
+                            chart1.ChartAreas[0].AxisX.ScaleView.ZoomReset();//Отмена одной операции масштабирования, совешённой не колесом а на графике, иначе откат к исходному размеру
+                            chart1.ChartAreas[0].AxisY.ScaleView.ZoomReset();
+                        }
+                        if (e.Delta > 0)
+                        {
+                            double XMin = chart1.ChartAreas[0].AxisX.ScaleView.ViewMinimum;
+                            double XMax = chart1.ChartAreas[0].AxisX.ScaleView.ViewMaximum;
+                            double YMin = chart1.ChartAreas[0].AxisY.ScaleView.ViewMinimum;
+                            double YMax = chart1.ChartAreas[0].AxisY.ScaleView.ViewMaximum;
+                            double NewXMin = chart1.ChartAreas[0].AxisX.PixelPositionToValue(e.Location.X) - (XMax - XMin) / 5;
+                            double NewXMax = chart1.ChartAreas[0].AxisX.PixelPositionToValue(e.Location.X) + (XMax - XMin) / 5;
+                            double NewYMin = chart1.ChartAreas[0].AxisY.PixelPositionToValue(e.Location.Y) - (YMax - YMin) / 5;
+                            double NewYMax = chart1.ChartAreas[0].AxisY.PixelPositionToValue(e.Location.Y) + (YMax - YMin) / 5;
+                            chart1.ChartAreas[0].AxisX.ScaleView.Zoom(NewXMin, NewXMax);
+                            chart1.ChartAreas[0].AxisY.ScaleView.Zoom(NewYMin, NewYMax);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void comboBox3_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (comboBox3.SelectedIndex == 0)//изменение mousemode
+            {
+                mousemode = 0;
+            }
+            else 
+            {
+                if ((comboBox3.SelectedIndex == 1) && (pausemode))
+                {
+                    mousemode = 1;
+                }
+                else
+                {
+                    mousemode = 2;
+                }
+            }
+            chart1.Focus();
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+namespace Graph_of_PLC_SMS
+{
+    class Parametr
+    {
+        public string name;
+        public int DBnumber;
+        public int offset;
+        public int amount;
+
+        public Parametr()
+        {
+            
+            this.name = "";
+            this.DBnumber = 1;
+            this.offset = 0;
+            this.amount = 1;
+        }
+
+        public Parametr(string name, int DB,int off,int amount)
+        {
+            this.name = name;
+            this.DBnumber = DB;
+            this.offset = off;
+            this.amount = amount;
+        }
+    }
+}
